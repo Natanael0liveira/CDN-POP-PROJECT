@@ -19,6 +19,7 @@ This hybrid architecture leverages the strengths of both solutions while ensurin
 4. [Integration: How Both Solutions Work Together](#4-integration-how-both-solutions-work-together)
 5. [Implementation Checklist](#5-implementation-checklist)
 6. [Network Diagrams](#6-network-diagrams)
+7. [Traffic Steering Configuration](#7-traffic-steering-configuration)
 
 ---
 
@@ -998,66 +999,254 @@ protocol static {
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### 6.3 Traffic Flow Diagram
+### 6.3 Traffic Flow Diagrams
+
+This section presents detailed diagrams for both ingress (incoming client requests) and egress (outgoing responses/origin fetches) traffic flows.
+
+#### 6.3.1 Ingress Flow Diagram
+
+The ingress flow handles incoming client requests through Katran load balancers to edge servers:
+
+![Ingress Traffic Flow](docs/diagrams/ingress-flow.svg)
+
+**Ingress Flow Steps:**
+
+1. **Client Request** - Client sends SYN to VIP:443 (anycast IP)
+2. **Anycast Routing** - Internet routes request to nearest POP via Transit ISP
+3. **ECMP Distribution** - Arista switch uses 5-tuple hash to select Katran LB
+4. **XDP Processing** - Katran processes packet before kernel (eBPF/XDP)
+5. **IPIP Encapsulation** - Packet encapsulated and forwarded to selected edge server
+
+**Ingress Packet Structure (IPIP Encapsulated):**
+```
+┌──────────┬──────────────────┬──────────────────┬─────┬─────────┐
+│ Ethernet │    Outer IP      │    Inner IP      │ TCP │ Payload │
+│          │ src: 172.16.X.Y  │ src: Client      │     │         │
+│ dst: Edge│ dst: Edge IP     │ dst: VIP         │     │         │
+│          │ proto: IPIP (4)  │ ports: C:443     │     │         │
+└──────────┴──────────────────┴──────────────────┴─────┴─────────┘
+```
+
+#### 6.3.2 Egress Flow Diagram: Fighting FIB + Traffic Steering
+
+The egress flow combines two complementary technologies that operate at different layers:
+
+- **Fighting FIB (Layer 3)**: Provides full Internet routing table for reachability to any origin/destination
+- **Traffic Steering (Layer 4)**: Adds health-based path selection between transit ISPs based on real-time TCP metrics
+
+![Egress Traffic Flow: Fighting FIB + Traffic Steering](docs/diagrams/egress-flow.svg)
+
+**Egress Flow Steps:**
+
+1. **Cache Response** - Edge server cache application (Varnish/NGINX/ATS) processes request and prepares response
+
+2. **Fighting FIB Layer (Reachability)**:
+   - BIRD has received full routing table (~800K IPv4 routes + ~100K IPv6 routes) via iBGP from switch
+   - Kernel routing table (main) has routes to all Internet destinations
+   - Silverton has populated static ARP entries for next-hop MAC addresses
+   - Provides the foundation: "I can reach any destination via some path"
+
+3. **Traffic Steering Layer (Path Selection)**:
+   - **eBPF Monitoring**: Kernel tracepoints collect TCP health metrics per destination:
+     - `tcp_retransmit_skb`: Tracks retransmissions
+     - `tcp_probe`: Collects RTT (srtt_us) from TCP stack
+     - `tcp_receive_reset`: Tracks connection failures (RST received)
+     - `tcp_connect`: Tracks connection attempts
+   - **Sliding Window**: Metrics aggregated over 30-second window (6 buckets × 5s each)
+   - **Health Score**: Calculated per destination using weighted penalties
+   - **IPSets**: Updated dynamically with destination-to-path mapping
+
+4. **Path Selection Decision**:
+   - Based on health scores, selects Transit ISP 1 (primary) or Transit ISP 2 (failover)
+   - Hysteresis margin (10 points) prevents flapping between paths
+   - Retry mechanism with exponential backoff (5m → 10m → 20m → 40m → 1h) for returning to primary
+
+5. **Packet Processing**:
+   - **iptables mangle/OUTPUT**: Marks packet based on ipset membership
+     - fwmark 0x100 for Transit 1 (primary)
+     - fwmark 0x101 for Transit 2 (failover)
+   - **Policy Routing**: Directs to appropriate routing table based on fwmark
+     - Table 100 for Transit 1
+     - Table 101 for Transit 2
+   - **SNAT**: Applied from pool specific to each transit (6 IPs per transit for port expansion)
+     - Uses `--random-fully` for port randomization
+
+6. **Direct Forwarding** - Response bypasses Katran entirely (DSR - Direct Server Return)
+
+7. **Switch Processing** - Arista switch performs MAC lookup and forwards directly to transit
+
+**Egress Packet Structure (No IPIP - Direct Routing):**
+```
+┌──────────┬──────────────────┬─────┬─────────┐
+│ Ethernet │       IP         │ TCP │ Payload │
+│ dst:Trans│ src: SNAT_IP     │     │         │
+│ src: Edge│ dst: Client/Orig │     │         │
+│          │ ports: 443:C     │     │         │
+└──────────┴──────────────────┴─────┴─────────┘
+Note: NO IPIP encapsulation (DSR)
+```
+
+**Dual-Stack Support:**
+
+The Traffic Steering system supports both IPv4 and IPv6:
+
+| Path | IPv4 IPSet | IPv6 IPSet | fwmark |
+|------|------------|------------|--------|
+| Transit 1 | `egress_path_0_v4` | `egress_path_0_v6` | 0x100 |
+| Transit 2 | `egress_path_1_v4` | `egress_path_1_v6` | 0x101 |
+
+#### 6.3.3 Architecture: Fighting FIB + Traffic Steering Integration
+
+The complete egress architecture shows how both solutions work together in a layered approach:
+
+![Fighting FIB + Traffic Steering Architecture](docs/diagrams/traffic-steering-architecture.svg)
+
+**Fighting FIB Components (Foundation Layer - Layer 3):**
+
+| Component | Function |
+|-----------|----------|
+| **BIRD** | Routing daemon that receives full Internet table via iBGP from switch (Route Reflector) |
+| **Routing Table (main)** | ~800K IPv4 routes + ~100K IPv6 routes in kernel for all Internet destinations |
+| **Silverton** | Propagates static ARP entries for next-hop MAC addresses from switch to hosts |
+| **Switch (RR)** | Acts as BGP Route Reflector, advertises routes to all edge servers via iBGP |
+
+**Traffic Steering Components (Intelligence Layer - Layer 4):**
+
+| Component | Function |
+|-----------|----------|
+| **steerd** | Userspace daemon (Go) that orchestrates traffic steering decisions |
+| **eBPF Programs** | Kernel-space monitoring via tracepoints: `tcp_retransmit_skb`, `tcp_probe`, `tcp_receive_reset`, `tcp_connect` |
+| **BPF Maps** | LRU hash maps storing per-destination statistics (`dest_stats_map`, `dest_stats_map_v6`, `watch_list`) |
+| **IPSets** | Dynamic destination lists per path (dual-stack: `egress_path_0_v4/v6`, `egress_path_1_v4/v6`) |
+| **iptables/nftables** | Packet marking (mangle/OUTPUT) and SNAT with pool (nat/POSTROUTING) |
+| **Policy Routing** | Route packets based on fwmark to appropriate routing table (ip rule/route) |
+| **Retry Manager** | Passive retry with exponential backoff to test recovery of primary path |
+
+**How They Work Together:**
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                        TRAFFIC FLOW DIAGRAM                                  │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  INGRESS (Request)                     EGRESS (Response)                    │
-│  ══════════════════                    ══════════════════                    │
-│                                                                             │
-│  Client                                 Edge Server                         │
-│    │                                        │                               │
-│    │ 1. Request to VIP                      │                               │
-│    │    (Anycast routing)                   │                               │
-│    ▼                                        │                               │
-│  Internet                               6. Response from VIP               │
-│    │                                    (Direct to switch)                 │
-│    │ 2. Route to POP                        │                               │
-│    ▼                                        ▼                               │
-│  Transit ISP ◀───────────────────────── Arista Switch                      │
-│    │                                        ▲                               │
-│    │ 3. Deliver to POP                      │ 7. MAC lookup                 │
-│    ▼                                        │    (direct to transit)        │
-│  Arista Switch                              │                               │
-│    │                                        │                               │
-│    │ 4. ECMP hash                           │                               │
-│    │    (5-tuple)                           │                               │
-│    ▼                                        │                               │
-│  Katran LB ◀────────────────────────────────┘                               │
-│    │                                                                         │
-│    │ 5. IPIP encap                                                           │
-│    │    (select edge server)                                                 │
-│    ▼                                                                         │
-│  Edge Server ◀───────────────────────────────────────────────────────────── │
-│    │                                                                         │
-│    └─────────────────────────────────────────────────────────────────────────│
-│                                                                             │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │                         PACKET STRUCTURES                            │   │
-│  │                                                                      │   │
-│  │  INGRESS (after Katran):                                             │   │
-│  │  ┌──────────────────────────────────────────────────────────────┐  │   │
-│  │  │ Ethernet │ Outer IP │ Inner IP │ TCP │ Data                   │  │   │
-│  │  │          │ src: 172.16.X.Y     │ src: Client                 │  │   │
-│  │  │ dst: Edge│ dst: Edge IP       │ dst: VIP                     │  │   │
-│  │  │          │ proto: IPIP (4)    │ ports: Client:443            │  │   │
-│  │  └──────────────────────────────────────────────────────────────┘  │   │
-│  │                                                                      │   │
-│  │  EGRESS (from Edge Server):                                          │   │
-│  │  ┌──────────────────────────────────────────────────────────────┐  │   │
-│  │  │ Ethernet │ IP │ TCP │ Data                                     │  │   │
-│  │  │ dst: Transit│ src: VIP                                        │  │   │
-│  │  │ src: Edge   │ dst: Client                                     │  │   │
-│  │  │             │ ports: 443:Client                               │  │   │
-│  │  └──────────────────────────────────────────────────────────────┘  │   │
-│  │                                                                      │   │
-│  │  Note: Egress has NO IPIP encapsulation (DSR)                       │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                    EGRESS PACKET PROCESSING                      │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  1. APPLICATION sends packet to destination                      │
+│     └─→ Cache (Varnish/NGINX) → connect(origin_ip)               │
+│                                                                  │
+│  2. FIGHTING FIB provides reachability (Layer 3)                 │
+│     └─→ Kernel routing table has route to origin                 │
+│     └─→ ARP table has next-hop MAC (from Silverton)              │
+│     └─→ "I CAN reach this destination"                           │
+│                                                                  │
+│  3. TRAFFIC STEERING adds path preference (Layer 4)              │
+│     └─→ Check if destination in ipset path_0 or path_1           │
+│     └─→ iptables sets fwmark based on ipset membership           │
+│     └─→ Policy routing selects table 100 or 101                  │
+│     └─→ "I SHOULD use THIS path for health reasons"              │
+│                                                                  │
+│  4. PACKET routed via selected interface                         │
+│     └─→ eth0 (Transit 1) or eth1 (Transit 2)                     │
+│     └─→ SNAT applied from pool (6 IPs per transit)               │
+│     └─→ --random-fully for port expansion                        │
+│                                                                  │
+│  5. DIRECT FORWARDING to switch                                  │
+│     └─→ Switch MAC lookup → Transit ISP                          │
+│     └─→ Bypasses Katran entirely (DSR)                           │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Health Score Calculation:**
+
+```
+Score = 100 - penalties
+
+Penalties:
+├── RTT penalty: max -30
+│   └── if rtt_ms > 200ms: score -= 30
+│
+├── Retransmission penalty: max -40
+│   └── if retrans_percent > 5%: score -= 40
+│
+├── Loss penalty: max -30
+│   └── if loss_percent > 2%: score -= 30
+│
+└── Connection failure penalty: -10 each
+    └── per consecutive failure
+
+Final: score = max(0, score)
+
+Thresholds:
+├── 70-100: Keep current path (healthy)
+├── 50-69: Consider alternative path (degraded)
+└── 0-49: Migrate immediately (unhealthy)
+```
+
+**Sliding Window Metrics:**
+
+Metrics are collected using a sliding window to reflect current health, not historical data:
+
+```
+Window Configuration:
+├── Total window: 30 seconds
+├── Buckets: 6 (circular buffer)
+├── Bucket duration: 5 seconds each
+└── Aggregation: Sum/Average across buckets
+
+This ensures:
+├── Transient issues don't trigger unnecessary migrations
+├── Persistent issues are detected within 30s
+└── Recovery is detected quickly when metrics improve
+```
+
+**Decision Flow:**
+
+1. **Monitor** - eBPF collects TCP metrics via kernel tracepoints (RTT, retransmissions, RST, connect attempts)
+2. **Aggregate** - Metrics stored in BPF maps with sliding window (30s)
+3. **Calculate** - Health score computed per destination using weighted penalties
+4. **Decide** - Select best path with hysteresis (10 points margin) to prevent flapping
+5. **Update** - Modify ipset membership → iptables rules apply fwmark → policy routing selects table
+6. **Route** - Policy routing directs traffic to selected interface with SNAT
+7. **Retry** - Periodic passive retry with exponential backoff tests primary path recovery
+
+**Retry Mechanism (Passive with Exponential Backoff):**
+
+When a destination is migrated from primary to failover path, the system periodically tests if the primary path has recovered:
+
+```
+Retry Schedule:
+├── Retry 0: 5 minutes (2^0 × 5min)
+├── Retry 1: 10 minutes (2^1 × 5min)
+├── Retry 2: 20 minutes (2^2 × 5min)
+├── Retry 3: 40 minutes (2^3 × 5min)
+└── Retry 4+: 60 minutes (capped at max)
+
+Mechanism:
+├── Remove destination from failover ipset temporarily
+├── Traffic naturally uses primary path (default)
+├── If primary still degraded: migrate back, increment backoff
+└── If primary healthy: keep on primary, reset backoff
+```
+
+**IPSets as Source of Truth:**
+
+The IPSets serve as the persistent state that survives daemon restarts:
+
+```
+State Recovery on Restart:
+├── steerd reads existing ipsets on startup
+├── Reconstructs internal state from ipset contents
+├── Continues steering without losing destination mappings
+└── No need for external state storage
+```
+
+**Cgroup Isolation:**
+
+The Traffic Steering can be applied selectively to specific processes:
+
+```
+├── Processes in steering.slice: Subject to traffic steering
+├── Other processes: Use default routing (main table)
+└── Achieved via iptables cgroup matching: -m cgroup --path steering.slice
 ```
 
 ---
@@ -1089,3 +1278,410 @@ This hybrid approach provides:
 - ✅ **Security**: No single point of failure, distributed architecture
 - ✅ **Scalability**: Linear scaling in both directions
 - ✅ **Cost-effectiveness**: Uses commodity hardware throughout
+
+---
+
+## 7. Traffic Steering Configuration
+
+This section provides detailed configuration examples for implementing Traffic Steering on edge servers.
+
+### 7.1 Overview
+
+Traffic Steering enables edge servers to intelligently select the best egress path based on real-time health metrics. Unlike traditional approaches that use tunnels, this implementation uses direct interface routing with health-based decision making.
+
+### 7.2 Network Interface Configuration
+
+Each edge server has multiple network interfaces connected to different transit ISPs:
+
+```bash
+# /etc/network/interfaces.d/traffic-steering.cfg
+
+# Primary transit interface (Path 0)
+auto eth0
+iface eth0 inet static
+    address 198.51.100.10
+    netmask 255.255.255.0
+    gateway 198.51.100.1
+    # Mark packets for routing table 100
+    up ip rule add fwmark 0x100 table 100
+    up ip route add default via 198.51.100.1 dev eth0 table 100
+    # SNAT pool
+    up ip addr add 198.51.100.2-7 dev eth0
+
+# Secondary transit interface (Path 1 - Failover)
+auto eth1
+iface eth1 inet static
+    address 203.0.113.10
+    netmask 255.255.255.0
+    gateway 203.0.113.1
+    # Mark packets for routing table 101
+    up ip rule add fwmark 0x101 table 101
+    up ip route add default via 203.0.113.1 dev eth1 table 101
+    # SNAT pool
+    up ip addr add 203.0.113.2-7 dev eth1
+```
+
+### 7.3 IPSets Configuration
+
+IPSets are used to dynamically group destinations by their assigned path:
+
+```bash
+# Create IPSets for each path
+ipset create egress_path_0_v4 hash:ip family inet maxelem 65536
+ipset create egress_path_1_v4 hash:ip family inet maxelem 65536
+
+# IPv6 sets (if needed)
+ipset create egress_path_0_v6 hash:ip family inet6 maxelem 65536
+ipset create egress_path_1_v6 hash:ip family inet6 maxelem 65536
+
+# Add destinations to primary path (initial assignment)
+ipset add egress_path_0_v4 203.0.113.10  # Origin 1
+ipset add egress_path_0_v4 192.0.2.30    # Origin 3
+ipset add egress_path_1_v4 198.51.100.20 # Origin 2 (on failover path)
+```
+
+### 7.4 iptables/nftables Configuration
+
+iptables marks packets based on destination IPSets and applies SNAT:
+
+```bash
+# /etc/iptables/traffic-steering.rules
+
+# Clear existing rules
+iptables -t mangle -F OUTPUT
+iptables -t nat -F POSTROUTING
+
+# === MANGLE Table - Packet Marking ===
+
+# Mark packets destined for Path 0 (primary)
+iptables -t mangle -A OUTPUT -m set --match-set egress_path_0_v4 dst \
+    -j MARK --set-mark 0x100
+
+# Mark packets destined for Path 1 (failover)
+iptables -t mangle -A OUTPUT -m set --match-set egress_path_1_v4 dst \
+    -j MARK --set-mark 0x101
+
+# Save mark to connection (for subsequent packets)
+iptables -t mangle -A OUTPUT -j CONNMARK --save-mark
+
+# === NAT Table - SNAT Configuration ===
+
+# SNAT for Path 0 (eth0) - with port expansion
+iptables -t nat -A POSTROUTING -o eth0 -m mark --mark 0x100 \
+    -j SNAT --to-source 198.51.100.2-198.51.100.7 --random-fully
+
+# SNAT for Path 1 (eth1) - with port expansion
+iptables -t nat -A POSTROUTING -o eth1 -m mark --mark 0x101 \
+    -j SNAT --to-source 203.0.113.2-203.0.113.7 --random-fully
+```
+
+**nftables equivalent (recommended for newer systems):**
+
+```bash
+# /etc/nftables/traffic-steering.nft
+
+table inet traffic_steering {
+    # Mark packets based on destination
+    chain output {
+        type route hook output priority mangle; policy accept;
+        
+        # Path 0 (primary)
+        ip daddr @egress_path_0_v4 meta mark set 0x100
+        ip6 daddr @egress_path_0_v6 meta mark set 0x100
+        
+        # Path 1 (failover)
+        ip daddr @egress_path_1_v4 meta mark set 0x101
+        ip6 daddr @egress_path_1_v6 meta mark set 0x101
+    }
+    
+    # SNAT for each path
+    chain postrouting {
+        type nat hook postrouting priority srcnat; policy accept;
+        
+        # Path 0 SNAT pool
+        oif "eth0" meta mark 0x100 snat to 198.51.100.2-198.51.100.7
+        
+        # Path 1 SNAT pool
+        oif "eth1" meta mark 0x101 snat to 203.0.113.2-203.0.113.7
+    }
+}
+```
+
+### 7.5 Policy Routing Configuration
+
+Policy routing directs marked packets to the appropriate routing table:
+
+```bash
+# /etc/iproute2/rt_tables
+# Add custom routing tables
+100     path0_primary
+101     path1_failover
+
+# Configure policy routing rules
+# Path 0 (mark 0x100 → table 100)
+ip rule add fwmark 0x100 table path0_primary priority 100
+
+# Path 1 (mark 0x101 → table 101)
+ip rule add fwmark 0x101 table path1_failover priority 101
+
+# Add routes to each table
+ip route add default via 198.51.100.1 dev eth0 table path0_primary
+ip route add default via 203.0.113.1 dev eth1 table path1_failover
+
+# Local routes for interface IPs
+ip route add 198.51.100.0/24 dev eth0 table path0_primary
+ip route add 203.0.113.0/24 dev eth1 table path1_failover
+```
+
+### 7.6 eBPF Monitoring Programs
+
+The Traffic Steering daemon uses eBPF programs to collect TCP metrics:
+
+```c
+// tcp_monitor.bpf.c
+#include <vmlinux.h>
+#include <bpf/bpf_helpers.h>
+#include <bpf/bpf_tracing.h>
+
+struct dest_stats {
+    u64 rtt_us;           // Round-trip time in microseconds
+    u64 retransmits;      // Total retransmissions
+    u64 bytes_sent;       // Total bytes sent
+    u64 bytes_acked;      // Total bytes acknowledged
+    u64 conn_failures;    // Connection failures (RST received)
+    u64 last_update;      // Timestamp of last update
+};
+
+struct {
+    __uint(type, BPF_MAP_TYPE_LRU_HASH);
+    __uint(max_entries, 65536);
+    __type(key, u32);     // Destination IP
+    __type(value, struct dest_stats);
+} dest_stats_map SEC(".maps");
+
+// Track TCP retransmissions
+SEC("tracepoint/tcp/tcp_retransmit_skb")
+int BPF_PROG(trace_retransmit, const struct sock *sk, int state)
+{
+    struct inet_sock *inet = (struct inet_sock *)sk;
+    u32 daddr = BPF_CORE_READ(inet, inet_daddr);
+    
+    struct dest_stats *stats = bpf_map_lookup_elem(&dest_stats_map, &daddr);
+    if (stats) {
+        __sync_fetch_and_add(&stats->retransmits, 1);
+        stats->last_update = bpf_ktime_get_ns();
+    }
+    return 0;
+}
+
+// Track TCP connection state and RTT
+SEC("tracepoint/tcp/tcp_probe")
+int BPF_PROG(trace_tcp_probe, const struct sock *sk)
+{
+    struct inet_sock *inet = (struct inet_sock *)sk;
+    u32 daddr = BPF_CORE_READ(inet, inet_daddr);
+    
+    struct tcp_sock *tp = (struct tcp_sock *)sk;
+    u32 srtt_us = BPF_CORE_READ(tp, srtt_us) >> 3;
+    
+    struct dest_stats new_stats = {};
+    struct dest_stats *stats = bpf_map_lookup_or_try_init(&dest_stats_map, &daddr, &new_stats);
+    if (stats) {
+        stats->rtt_us = srtt_us;
+        stats->last_update = bpf_ktime_get_ns();
+    }
+    return 0;
+}
+
+// Track connection failures (RST received)
+SEC("tracepoint/tcp/tcp_receive_reset")
+int BPF_PROG(trace_reset, const struct sock *sk)
+{
+    struct inet_sock *inet = (struct inet_sock *)sk;
+    u32 daddr = BPF_CORE_READ(inet, inet_daddr);
+    
+    struct dest_stats *stats = bpf_map_lookup_elem(&dest_stats_map, &daddr);
+    if (stats) {
+        __sync_fetch_and_add(&stats->conn_failures, 1);
+        stats->last_update = bpf_ktime_get_ns();
+    }
+    return 0;
+}
+
+char LICENSE[] SEC("license") = "GPL";
+```
+
+### 7.7 steerd Configuration
+
+The Traffic Steering daemon configuration file:
+
+```yaml
+# /etc/steerd/config.yaml
+
+# Monitoring settings
+monitoring:
+  bpf_programs:
+    tcp_retransmit: /usr/lib/steerd/tcp_monitor.bpf.o
+    tcp_probe: /usr/lib/steerd/tcp_monitor.bpf.o
+    tcp_reset: /usr/lib/steerd/tcp_monitor.bpf.o
+  
+  # Sliding window for metrics (seconds)
+  window_size: 30
+  
+  # Polling interval (seconds)
+  poll_interval: 5
+
+# Health score calculation
+health:
+  # Maximum penalties
+  rtt_penalty_max: 30        # -30 if RTT > threshold
+  rtt_threshold_ms: 200
+  retrans_penalty_max: 40    # -40 if retrans > threshold
+  retrans_threshold_pct: 5
+  conn_fail_penalty: 10      # -10 per failure
+  
+  # Score thresholds
+  healthy_threshold: 70
+  degraded_threshold: 50
+
+# Path configuration
+paths:
+  - id: 0
+    name: "primary"
+    interface: "eth0"
+    ipset_v4: "egress_path_0_v4"
+    ipset_v6: "egress_path_0_v6"
+    fwmark: 0x100
+    priority: 1
+    snat_pool:
+      - 198.51.100.2
+      - 198.51.100.3
+      - 198.51.100.4
+      - 198.51.100.5
+      - 198.51.100.6
+      - 198.51.100.7
+  
+  - id: 1
+    name: "failover"
+    interface: "eth1"
+    ipset_v4: "egress_path_1_v4"
+    ipset_v6: "egress_path_1_v6"
+    fwmark: 0x101
+    priority: 2
+    snat_pool:
+      - 203.0.113.2
+      - 203.0.113.3
+      - 203.0.113.4
+      - 203.0.113.5
+      - 203.0.113.6
+      - 203.0.113.7
+
+# Decision engine settings
+decision:
+  # Hysteresis to prevent flapping
+  hysteresis_margin: 10      # Don't switch unless new path is 10 points better
+  
+  # Minimum time between path changes (seconds)
+  min_switch_interval: 30
+  
+  # Retry settings for failed paths
+  retry:
+    initial_backoff: 5       # Initial backoff (seconds)
+    max_backoff: 300         # Maximum backoff (seconds)
+    backoff_multiplier: 2
+
+# Metrics export
+metrics:
+  enabled: true
+  listen_address: "0.0.0.0:9090"
+  path: "/metrics"
+
+# Logging
+logging:
+  level: "info"
+  file: "/var/log/steerd/steerd.log"
+```
+
+### 7.8 Systemd Service
+
+Create a systemd service for the Traffic Steering daemon:
+
+```ini
+# /etc/systemd/system/steerd.service
+[Unit]
+Description=Traffic Steering Daemon
+After=network.target
+Wants=network.target
+
+[Service]
+Type=notify
+ExecStart=/usr/bin/steerd -config /etc/steerd/config.yaml
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65536
+
+# BPF capabilities
+CapabilityBoundingSet=CAP_BPF CAP_NET_ADMIN CAP_SYS_ADMIN
+AmbientCapabilities=CAP_BPF CAP_NET_ADMIN CAP_SYS_ADMIN
+
+[Install]
+WantedBy=multi-user.target
+```
+
+### 7.9 Verification Commands
+
+Verify Traffic Steering is working correctly:
+
+```bash
+# Check IPSets
+ipset list egress_path_0_v4
+ipset list egress_path_1_v4
+
+# Check iptables rules
+iptables -t mangle -L OUTPUT -v -n
+iptables -t nat -L POSTROUTING -v -n
+
+# Check policy routing
+ip rule list
+ip route show table path0_primary
+ip route show table path1_failover
+
+# Check BPF maps
+bpftool map list
+bpftool map dump name dest_stats_map
+
+# Check steerd status
+systemctl status steerd
+journalctl -u steerd -f
+
+# Check metrics
+curl http://localhost:9090/metrics
+
+# Test path selection
+# Add a test destination to failover path
+ipset add egress_path_1_v4 192.0.2.100
+
+# Verify traffic uses correct path
+tcpdump -i eth1 host 192.0.2.100 -n
+```
+
+### 7.10 Integration with Existing Architecture
+
+The Traffic Steering system integrates with the existing Katran + Fighting FIB architecture:
+
+| Component | Integration Point |
+|-----------|-------------------|
+| **Katran (Ingress)** | No changes - continues to handle incoming traffic via XDP |
+| **BIRD (Egress Routes)** | Provides full routing table for origin reachability |
+| **Silverton (ARP)** | Provides static ARP for next-hop MACs |
+| **Traffic Steering** | Adds health-based path selection on top of BIRD routes |
+
+**Traffic Flow Summary:**
+
+```
+INGRESS: Client → Internet → Transit → Switch → Katran → Edge Server
+EGRESS:  Edge Server → Traffic Steering → eth0/eth1 → Switch → Transit → Origin/Client
+```
+
+The Traffic Steering layer operates at the egress path selection level, choosing between available transit ISPs based on real-time health metrics, while the underlying routing infrastructure (BIRD, Silverton) remains unchanged.
