@@ -398,6 +398,446 @@ For **outbound traffic** (responses from edge servers to clients, and traffic to
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
+### 3.5 Silverton Communication Details
+
+This section describes in detail how Silverton components communicate between the switch and server.
+
+#### 3.5.1 Silverton Architecture Overview
+
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│                    SILVERTON COMMUNICATION ARCHITECTURE                   │
+├──────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  ┌───────────────────────────────────────────────────────────────────┐  │
+│  │                    ARISTA SWITCH (EOS)                             │  │
+│  │  ┌─────────────────────────────────────────────────────────────┐  │  │
+│  │  │  Silverton Controller (Switch Side)                         │  │  │
+│  │  │                                                              │  │  │
+│  │  │  Components:                                                 │  │  │
+│  │  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐       │  │  │
+│  │  │  │ EOS API      │  │ ARP Watcher  │  │ gRPC Server  │       │  │  │
+│  │  │  │ Client       │  │              │  │              │       │  │  │
+│  │  │  └──────────────┘  └──────────────┘  └──────────────┘       │  │  │
+│  │  │        │                  │                  │               │  │  │
+│  │  │        ▼                  ▼                  ▼               │  │  │
+│  │  │  ┌─────────────────────────────────────────────────────┐   │  │  │
+│  │  │  │  ARP Table Monitor (via EOS eAPI)                   │   │  │  │
+│  │  │  │  - Subscribes to ARP table changes                  │   │  │  │
+│  │  │  │  - Detects new neighbor entries                     │   │  │  │
+│  │  │  │  - Tracks MAC address changes                       │   │  │  │
+│  │  │  └─────────────────────────────────────────────────────┘   │  │  │
+│  │  └─────────────────────────────────────────────────────────────┘  │  │
+│  └───────────────────────────────────────────────────────────────────┘  │
+│                              │                                           │
+│                              │ gRPC / HTTP2 over TCP                     │
+│                              │ (Port 50051 or custom)                    │
+│                              ▼                                           │
+│  ┌───────────────────────────────────────────────────────────────────┐  │
+│  │                    EDGE SERVER (Linux)                             │  │
+│  │  ┌─────────────────────────────────────────────────────────────┐  │  │
+│  │  │  Silverton Agent (Server Side)                              │  │  │
+│  │  │                                                              │  │  │
+│  │  │  Components:                                                 │  │  │
+│  │  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐       │  │  │
+│  │  │  │ gRPC Client  │  │ ARP Manager  │  │ Netlink      │       │  │  │
+│  │  │  │              │  │              │  │ Interface    │       │  │  │
+│  │  │  └──────────────┘  └──────────────┘  └──────────────┘       │  │  │
+│  │  │        │                  │                  │               │  │  │
+│  │  │        ▼                  ▼                  ▼               │  │  │
+│  │  │  ┌─────────────────────────────────────────────────────┐   │  │  │
+│  │  │  │  Kernel ARP Table Management                        │   │  │  │
+│  │  │  │  - Creates static ARP entries                       │   │  │  │
+│  │  │  │  - Updates neighbor entries via netlink             │   │  │  │
+│  │  │  │  - Sets entries as NUD_PERMANENT                    │   │  │  │
+│  │  │  └─────────────────────────────────────────────────────┘   │  │  │
+│  │  └─────────────────────────────────────────────────────────────┘  │  │
+│  └───────────────────────────────────────────────────────────────────┘  │
+│                                                                          │
+└──────────────────────────────────────────────────────────────────────────┘
+```
+
+#### 3.5.2 Communication Protocol Flow
+
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│                    SILVERTON PROTOCOL COMMUNICATION                       │
+├──────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  SEQUENCE: ARP Entry Propagation                                         │
+│                                                                          │
+│  Time                                                                    │
+│   │                                                                      │
+│   │  ┌──────────────────────────────────────────────────────────────┐  │
+│   │  │ T1: Switch learns MAC via ARP/NDP                            │  │
+│   │  │                                                                │  │
+│   │  │  Transit Router (10.0.0.1)                                     │  │
+│   │  │       │                                                        │  │
+│   │  │       │ ARP Request: "Who has 10.0.0.1?"                      │  │
+│   │  │       │ ◀──────────────────────────────────── Switch          │  │
+│   │  │       │                                                        │  │
+│   │  │       │ ARP Reply: "10.0.0.1 is at aa:bb:cc:dd:ee:ff"        │  │
+│   │  │       │ ─────────────────────────────────────▶ Switch        │  │
+│   │  │       │                                                        │  │
+│   │  │  Switch EOS:                                                   │  │
+│   │  │    - ARP table updated: 10.0.0.1 → aa:bb:cc:dd:ee:ff         │  │
+│   │  │    - Event triggered via EOS eAPI                             │  │
+│   └──────────────────────────────────────────────────────────────────┘  │
+│   │                                                                      │
+│   │  ┌──────────────────────────────────────────────────────────────┐  │
+│   │  │ T2: Silverton Controller detects change                      │  │
+│   │  │                                                                │  │
+│   │  │  Silverton Controller (Switch):                               │  │
+│   │  │    - Receives ARP table change event                          │  │
+│   │  │    - Extracts: IP=10.0.0.1, MAC=aa:bb:cc:dd:ee:ff            │  │
+│   │  │    - Interface=Ethernet1                                      │  │
+│   │  │    - Prepares gRPC message                                    │  │
+│   └──────────────────────────────────────────────────────────────────┘  │
+│   │                                                                      │
+│   │  ┌──────────────────────────────────────────────────────────────┐  │
+│   │  │ T3: gRPC Message sent to all registered agents                │  │
+│   │  │                                                                │  │
+│   │  │  gRPC Request (Protobuf):                                     │  │
+│   │  │    message ArpUpdate {                                        │  │
+│   │  │      string ip_address = 1;     // "10.0.0.1"                │  │
+│   │  │      string mac_address = 2;    // "aa:bb:cc:dd:ee:ff"       │  │
+│   │  │      string interface = 3;      // "eth0"                    │  │
+│   │  │      int32 vrf = 4;             // 0 (default)               │  │
+│   │  │      UpdateType type = 5;       // ADDOrUpdate              │  │
+│   │  │    }                                                          │  │
+│   │  │                                                                │  │
+│   │  │  Switch ──────── gRPC Stream ────────▶ Edge Server 1         │  │
+│   │  │  Switch ──────── gRPC Stream ────────▶ Edge Server 2         │  │
+│   │  │  Switch ──────── gRPC Stream ────────▶ Edge Server N         │  │
+│   └──────────────────────────────────────────────────────────────────┘  │
+│   │                                                                      │
+│   │  ┌──────────────────────────────────────────────────────────────┐  │
+│   │  │ T4: Silverton Agent processes update                         │  │
+│   │  │                                                                │  │
+│   │  │  Silverton Agent (Server):                                    │  │
+│   │  │    - Receives gRPC message                                    │  │
+│   │  │    - Validates IP and MAC format                              │  │
+│   │  │    - Calls Netlink interface                                  │  │
+│   │  │                                                                │  │
+│   │  │  Netlink Operation:                                           │  │
+│   │  │    NLM_F_REQUEST | NLM_F_CREATE | NLM_F_REPLACE              │  │
+│   │  │    nda_ifindex = if_nametoindex("eth0")                      │  │
+│   │  │    nda_dst = 10.0.0.1                                         │  │
+│   │  │    nda_lladdr = aa:bb:cc:dd:ee:ff                            │  │
+│   │  │    ndm_state = NUD_PERMANENT                                  │  │
+│   └──────────────────────────────────────────────────────────────────┘  │
+│   │                                                                      │
+│   │  ┌──────────────────────────────────────────────────────────────┐  │
+│   │  │ T5: Kernel ARP table updated                                  │  │
+│   │  │                                                                │  │
+│   │  │  $ ip neigh show                                              │  │
+│   │  │  10.0.0.1 dev eth0 lladdr aa:bb:cc:dd:ee:ff nud permanent   │  │
+│   │  │                                                                │  │
+│   │  │  Result:                                                      │  │
+│   │  │    - Static ARP entry created                                 │  │
+│   │  │    - No ARP broadcasts needed for this neighbor              │  │
+│   │  │    - Entry survives interface flaps                          │  │
+│   └──────────────────────────────────────────────────────────────────┘  │
+│   │                                                                      │
+│   ▼                                                                      │
+│                                                                          │
+└──────────────────────────────────────────────────────────────────────────┘
+```
+
+#### 3.5.3 Switch-Side Silverton Implementation
+
+```bash
+# Silverton Controller running on Arista Switch (via EOS API or container)
+
+# Configuration on Arista EOS
+!
+daemon Silverton
+   exec /usr/bin/Silverton-controller
+   option grpc_port value 50051
+   option enable_arp_watch value true
+   option log_level value info
+   no shutdown
+!
+   
+# EOS API Subscription (Python example running on switch)
+import eos
+import grpc
+import arp_update_pb2
+import arp_update_pb2_grpc
+
+class SilvertonController(eos.EosSdkEntity):
+    def __init__(self, tracer):
+        self.tracer = tracer
+        self.arp_table = eos.ArpTable(tracer)
+        self.arp_table.handler(self.on_arp_change)
+        
+        # gRPC server to stream updates to agents
+        self.server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
+        self.update_queue = []
+        
+    def on_arp_change(self, key, old_entry, new_entry):
+        """
+        Called when ARP table changes on switch
+        """
+        if new_entry is None:
+            # ARP entry deleted
+            update = arp_update_pb2.ArpUpdate(
+                ip_address=str(key.ip_address()),
+                mac_address="",
+                type=arp_update_pb2.DELETE
+            )
+        else:
+            # ARP entry added or updated
+            update = arp_update_pb2.ArpUpdate(
+                ip_address=str(key.ip_address()),
+                mac_address=str(new_entry.mac_address()),
+                interface=str(new_entry.intf()),
+                type=arp_update_pb2.ADD_OR_UPDATE
+            )
+        
+        # Broadcast to all connected agents
+        self.broadcast_update(update)
+        
+    def broadcast_update(self, update):
+        """
+        Send update to all registered Silverton agents
+        """
+        for agent_stub in self.registered_agents:
+            try:
+                agent_stub.OnArpUpdate(update)
+            except grpc.RpcError:
+                # Agent disconnected, remove from list
+                self.registered_agents.remove(agent_stub)
+```
+
+#### 3.5.4 Server-Side Silverton Agent Implementation
+
+```bash
+# Silverton Agent running on Edge Server (Linux)
+
+# Installation
+sudo apt-get install silverton-agent
+# or
+sudo yum install silverton-agent
+
+# Configuration: /etc/silverton/agent.conf
+[controller]
+# Switch IP addresses (for HA, multiple controllers)
+controllers = 10.0.1.254:50051,10.0.1.253:50051
+
+[agent]
+# Local interface to manage
+interface = eth0
+
+# Retry settings
+retry_interval = 5
+max_retries = 10
+
+# Logging
+log_level = info
+log_file = /var/log/silverton-agent.log
+
+[grpc]
+# gRPC settings
+keepalive_time = 30s
+keepalive_timeout = 10s
+```
+
+```python
+# Silverton Agent Implementation (Python example)
+import grpc
+import netlink
+import arp_update_pb2
+import arp_update_pb2_grpc
+
+class SilvertonAgent:
+    def __init__(self, config):
+        self.config = config
+        self.nl_socket = netlink.socket()
+        self.controllers = config['controllers']
+        
+    def connect_to_controller(self):
+        """
+        Establish gRPC connection to switch controller
+        """
+        for controller in self.controllers:
+            try:
+                channel = grpc.insecure_channel(controller)
+                self.stub = arp_update_pb2_grpc.SilvertonStub(channel)
+                
+                # Register for ARP updates
+                request = arp_update_pb2.RegisterRequest(
+                    hostname=os.uname().nodename,
+                    interface=self.config['interface']
+                )
+                self.stub.Register(request)
+                return True
+            except grpc.RpcError:
+                continue
+        return False
+    
+    def on_arp_update(self, update):
+        """
+        Process ARP update from controller
+        """
+        if update.type == arp_update_pb2.DELETE:
+            self.delete_arp_entry(update.ip_address, update.interface)
+        else:
+            self.add_arp_entry(
+                update.ip_address,
+                update.mac_address,
+                update.interface
+            )
+    
+    def add_arp_entry(self, ip, mac, interface):
+        """
+        Add static ARP entry via netlink
+        """
+        # Create neighbor message
+        msg = netlink.NeighborMessage()
+        msg.family = socket.AF_INET
+        msg.ifindex = netlink.if_nametoindex(interface)
+        msg.state = netlink.NUD_PERMANENT  # Static entry
+        msg.flags = netlink.NTF_NONE
+        
+        # Set destination IP
+        msg.attrs = [
+            (netlink.NDA_DST, ip),
+            (netlink.NDA_LLADDR, mac),
+        ]
+        
+        # Send to kernel
+        netlink.nl_socket.send(msg, netlink.NLM_F_REQUEST | 
+                                    netlink.NLM_F_CREATE | 
+                                    netlink.NLM_F_REPLACE)
+        
+        logging.info(f"Added ARP entry: {ip} -> {mac} on {interface}")
+    
+    def delete_arp_entry(self, ip, interface):
+        """
+        Delete ARP entry via netlink
+        """
+        msg = netlink.NeighborMessage()
+        msg.family = socket.AF_INET
+        msg.ifindex = netlink.if_nametoindex(interface)
+        msg.attrs = [(netlink.NDA_DST, ip)]
+        
+        netlink.nl_socket.send(msg, netlink.NLM_F_REQUEST | netlink.NLM_F_ACK)
+        
+        logging.info(f"Deleted ARP entry: {ip} on {interface}")
+    
+    def run(self):
+        """
+        Main loop: receive updates from controller
+        """
+        while True:
+            try:
+                for update in self.stub.StreamArpUpdates(
+                    arp_update_pb2.StreamRequest()
+                ):
+                    self.on_arp_update(update)
+            except grpc.RpcError as e:
+                logging.error(f"gRPC error: {e}")
+                time.sleep(self.config['retry_interval'])
+                self.connect_to_controller()
+```
+
+#### 3.5.5 Verification Commands
+
+```bash
+# On Arista Switch - Check Silverton Controller Status
+show daemon Silverton
+show daemon Silverton status
+show daemon Silverton logs
+
+# Check ARP table on switch
+show arp
+show arp detail
+
+# On Edge Server - Check Silverton Agent Status
+systemctl status silverton-agent
+journalctl -u silverton-agent -f
+
+# Check ARP entries (should show "nud permanent")
+ip neigh show
+ip neigh show dev eth0
+
+# Example output:
+# 10.0.0.1 dev eth0 lladdr aa:bb:cc:dd:ee:ff nud permanent
+# 10.0.0.2 dev eth0 lladdr 11:22:33:44:55:66 nud permanent
+
+# Verify static entries
+ip neigh show nud permanent
+
+# Check gRPC connection
+ss -tn | grep 50051
+netstat -tn | grep 50051
+
+# Manual ARP entry test (for debugging)
+ip neigh replace 10.0.0.1 lladdr aa:bb:cc:dd:ee:ff dev eth0 nud permanent
+
+# Delete and let Silverton re-add
+ip neigh del 10.0.0.1 dev eth0
+# Wait a few seconds, then check
+ip neigh show 10.0.0.1
+```
+
+#### 3.5.6 Silverton Communication Benefits
+
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│                    SILVERTON BENEFITS                                     │
+├──────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  1. ELIMINATES ARP BROADCASTS                                            │
+│     ────────────────────────────                                         │
+│     • No ARP requests flooding the network                               │
+│     • No ARP replies consuming bandwidth                                 │
+│     • Reduces broadcast domain noise                                     │
+│     • Particularly important at scale (100s of servers)                  │
+│                                                                          │
+│  2. FASTER CONVERGENCE                                                   │
+│     ─────────────────────                                                │
+│     • ARP entries pre-populated before traffic                           │
+│     • No waiting for ARP resolution (typically 1-3ms per lookup)         │
+│     • Immediate packet forwarding                                        │
+│     • Critical for high-frequency connection scenarios                   │
+│                                                                          │
+│  3. DETERMINISTIC BEHAVIOR                                               │
+│     ───────────────────────                                              │
+│     • Static entries don't expire                                        │
+│     • No ARP timeout issues (typically 30-60 seconds)                    │
+│     • Predictable forwarding path                                        │
+│     • No "ARP cache miss" latency spikes                                  │
+│                                                                          │
+│  4. HIGH AVAILABILITY                                                    │
+│     ───────────────────                                                  │
+│     • Multiple controllers for redundancy                                │
+│     • Automatic failover to backup controller                            │
+│     • Graceful handling of network partitions                            │
+│     • Persistent entries survive agent restarts                          │
+│                                                                          │
+│  5. SECURITY BENEFITS                                                    │
+│     ───────────────────                                                  │
+│     • Static entries can't be poisoned (nud permanent)                   │
+│     • gRPC authentication available (mTLS)                               │
+│     • Controlled propagation path                                        │
+│     • Audit trail of all ARP changes                                     │
+│                                                                          │
+│  COMPARISON:                                                             │
+│  ┌─────────────────────────────────────────────────────────────────────┐│
+│  │                    Traditional ARP    │    Silverton ARP            ││
+│  │  ─────────────────────────────────────────────────────────────────  ││
+│  │  Resolution Time   1-3ms per lookup  │  0ms (pre-populated)        ││
+│  │  Broadcast Traffic Yes               │  No                          ││
+│  │  Cache Expiry      30-60 seconds     │  Never (permanent)          ││
+│  │  Spoofing Risk     Yes               │  Reduced (static)           ││
+│  │  Scale Impact      O(n²) broadcasts  │  O(n) updates               ││
+│  └─────────────────────────────────────────────────────────────────────┘│
+│                                                                          │
+└──────────────────────────────────────────────────────────────────────────┘
+```
+
 ### 3.5 Egress Packet Flow (DSR)
 
 ```

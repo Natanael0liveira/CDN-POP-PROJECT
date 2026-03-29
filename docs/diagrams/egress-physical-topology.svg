@@ -1,0 +1,208 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 800" width="1200" height="800">
+  <defs>
+    <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#333"/>
+    </marker>
+    <marker id="arrowhead-orange" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#F57C00"/>
+    </marker>
+    <marker id="arrowhead-blue" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#1976D2"/>
+    </marker>
+    <marker id="arrowhead-green" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#388E3C"/>
+    </marker>
+    <marker id="arrowhead-purple" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#7B1FA2"/>
+    </marker>
+  </defs>
+  
+  <!-- Background -->
+  <rect width="1200" height="800" fill="#fafafa"/>
+  
+  <!-- Title -->
+  <text x="600" y="35" text-anchor="middle" font-family="Arial, sans-serif" font-size="24" font-weight="bold" fill="#333">EGRESS PHYSICAL TOPOLOGY</text>
+  <text x="600" y="55" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#666">Physical Connections: Transit ISPs → Switches → Edge Servers</text>
+  
+  <!-- Transit ISP Section -->
+  <rect x="50" y="80" width="1100" height="120" rx="10" fill="#FFF3E0" stroke="#F57C00" stroke-width="3"/>
+  <text x="600" y="105" text-anchor="middle" font-family="Arial, sans-serif" font-size="16" font-weight="bold" fill="#E65100">TRANSIT ISPs (Upstream Providers)</text>
+  
+  <!-- Transit ISP 1 -->
+  <rect x="100" y="120" width="200" height="60" rx="8" fill="#FFE0B2" stroke="#F57C00" stroke-width="2"/>
+  <text x="200" y="145" text-anchor="middle" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#E65100">Transit ISP 1</text>
+  <text x="200" y="165" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="#666">AS 64513 | Path 0 (Primary)</text>
+  
+  <!-- Transit ISP 2 -->
+  <rect x="500" y="120" width="200" height="60" rx="8" fill="#BBDEFB" stroke="#1976D2" stroke-width="2"/>
+  <text x="600" y="145" text-anchor="middle" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#0D47A1">Transit ISP 2</text>
+  <text x="600" y="165" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="#666">AS 64514 | Path 1 (Failover)</text>
+  
+  <!-- Transit ISP 3 (Optional) -->
+  <rect x="900" y="120" width="200" height="60" rx="8" fill="#E1BEE7" stroke="#7B1FA2" stroke-width="2"/>
+  <text x="1000" y="145" text-anchor="middle" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#7B1FA2">Transit ISP 3</text>
+  <text x="1000" y="165" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="#666">AS 64515 | Path 2 (Backup)</text>
+  
+  <!-- Physical Connection Lines: Transit to Switches -->
+  <line x1="200" y1="180" x2="200" y2="250" stroke="#F57C00" stroke-width="4" marker-end="url(#arrowhead-orange)"/>
+  <line x1="600" y1="180" x2="600" y2="250" stroke="#1976D2" stroke-width="4" marker-end="url(#arrowhead-blue)"/>
+  <line x1="1000" y1="180" x2="1000" y2="250" stroke="#7B1FA2" stroke-width="4" marker-end="url(#arrowhead-purple)"/>
+  
+  <!-- Connection Labels -->
+  <text x="220" y="220" font-family="Arial, sans-serif" font-size="9" fill="#F57C00">10Gbps</text>
+  <text x="620" y="220" font-family="Arial, sans-serif" font-size="9" fill="#1976D2">10Gbps</text>
+  <text x="1020" y="220" font-family="Arial, sans-serif" font-size="9" fill="#7B1FA2">10Gbps</text>
+  
+  <!-- Switch Section -->
+  <rect x="50" y="250" width="1100" height="180" rx="10" fill="#E8F5E9" stroke="#388E3C" stroke-width="3"/>
+  <text x="600" y="275" text-anchor="middle" font-family="Arial, sans-serif" font-size="16" font-weight="bold" fill="#2E7D32">BORDER SWITCHES (Arista)</text>
+  
+  <!-- Switch 1 (Primary) -->
+  <rect x="150" y="295" width="250" height="110" rx="8" fill="#C8E6C9" stroke="#388E3C" stroke-width="2"/>
+  <text x="275" y="320" text-anchor="middle" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#2E7D32">Arista Switch 1</text>
+  <text x="275" y="340" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="#666">(Primary Route Reflector)</text>
+  
+  <!-- Switch 1 Ports -->
+  <rect x="165" y="355" width="70" height="40" rx="4" fill="#A5D6A7" stroke="#388E3C" stroke-width="1"/>
+  <text x="200" y="372" text-anchor="middle" font-family="Arial, sans-serif" font-size="8" font-weight="bold" fill="#1B5E20">Eth1</text>
+  <text x="200" y="385" text-anchor="middle" font-family="Arial, sans-serif" font-size="7" fill="#2E7D32">→ Transit1</text>
+  
+  <rect x="245" y="355" width="70" height="40" rx="4" fill="#A5D6A7" stroke="#388E3C" stroke-width="1"/>
+  <text x="280" y="372" text-anchor="middle" font-family="Arial, sans-serif" font-size="8" font-weight="bold" fill="#1B5E20">Eth2</text>
+  <text x="280" y="385" text-anchor="middle" font-family="Arial, sans-serif" font-size="7" fill="#2E7D32">→ Transit2</text>
+  
+  <rect x="325" y="355" width="60" height="40" rx="4" fill="#A5D6A7" stroke="#388E3C" stroke-width="1"/>
+  <text x="355" y="372" text-anchor="middle" font-family="Arial, sans-serif" font-size="8" font-weight="bold" fill="#1B5E20">Eth3-8</text>
+  <text x="355" y="385" text-anchor="middle" font-family="Arial, sans-serif" font-size="7" fill="#2E7D32">→ Servers</text>
+  
+  <!-- Switch 2 (Secondary) -->
+  <rect x="500" y="295" width="250" height="110" rx="8" fill="#C8E6C9" stroke="#388E3C" stroke-width="2"/>
+  <text x="625" y="320" text-anchor="middle" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#2E7D32">Arista Switch 2</text>
+  <text x="625" y="340" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="#666">(Secondary Route Reflector)</text>
+  
+  <!-- Switch 2 Ports -->
+  <rect x="515" y="355" width="70" height="40" rx="4" fill="#A5D6A7" stroke="#388E3C" stroke-width="1"/>
+  <text x="550" y="372" text-anchor="middle" font-family="Arial, sans-serif" font-size="8" font-weight="bold" fill="#1B5E20">Eth1</text>
+  <text x="550" y="385" text-anchor="middle" font-family="Arial, sans-serif" font-size="7" fill="#2E7D32">→ Transit1</text>
+  
+  <rect x="595" y="355" width="70" height="40" rx="4" fill="#A5D6A7" stroke="#388E3C" stroke-width="1"/>
+  <text x="630" y="372" text-anchor="middle" font-family="Arial, sans-serif" font-size="8" font-weight="bold" fill="#1B5E20">Eth2</text>
+  <text x="630" y="385" text-anchor="middle" font-family="Arial, sans-serif" font-size="7" fill="#2E7D32">→ Transit2</text>
+  
+  <rect x="675" y="355" width="60" height="40" rx="4" fill="#A5D6A7" stroke="#388E3C" stroke-width="1"/>
+  <text x="705" y="372" text-anchor="middle" font-family="Arial, sans-serif" font-size="8" font-weight="bold" fill="#1B5E20">Eth3-8</text>
+  <text x="705" y="385" text-anchor="middle" font-family="Arial, sans-serif" font-size="7" fill="#2E7D32">→ Servers</text>
+  
+  <!-- Switch 3 (Tertiary) -->
+  <rect x="850" y="295" width="250" height="110" rx="8" fill="#C8E6C9" stroke="#388E3C" stroke-width="2"/>
+  <text x="975" y="320" text-anchor="middle" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#2E7D32">Arista Switch 3</text>
+  <text x="975" y="340" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="#666">(Tertiary Route Reflector)</text>
+  
+  <!-- Switch 3 Ports -->
+  <rect x="865" y="355" width="70" height="40" rx="4" fill="#A5D6A7" stroke="#388E3C" stroke-width="1"/>
+  <text x="900" y="372" text-anchor="middle" font-family="Arial, sans-serif" font-size="8" font-weight="bold" fill="#1B5E20">Eth1</text>
+  <text x="900" y="385" text-anchor="middle" font-family="Arial, sans-serif" font-size="7" fill="#2E7D32">→ Transit2</text>
+  
+  <rect x="945" y="355" width="70" height="40" rx="4" fill="#A5D6A7" stroke="#388E3C" stroke-width="1"/>
+  <text x="980" y="372" text-anchor="middle" font-family="Arial, sans-serif" font-size="8" font-weight="bold" fill="#1B5E20">Eth2</text>
+  <text x="980" y="385" text-anchor="middle" font-family="Arial, sans-serif" font-size="7" fill="#2E7D32">→ Transit3</text>
+  
+  <rect x="1025" y="355" width="60" height="40" rx="4" fill="#A5D6A7" stroke="#388E3C" stroke-width="1"/>
+  <text x="1055" y="372" text-anchor="middle" font-family="Arial, sans-serif" font-size="8" font-weight="bold" fill="#1B5E20">Eth3-8</text>
+  <text x="1055" y="385" text-anchor="middle" font-family="Arial, sans-serif" font-size="7" fill="#2E7D32">→ Servers</text>
+  
+  <!-- Inter-Switch Links -->
+  <line x1="400" y1="350" x2="500" y2="350" stroke="#388E3C" stroke-width="3" stroke-dasharray="10,5"/>
+  <line x1="750" y1="350" x2="850" y2="350" stroke="#388E3C" stroke-width="3" stroke-dasharray="10,5"/>
+  <text x="450" y="345" text-anchor="middle" font-family="Arial, sans-serif" font-size="8" fill="#388E3C">MLAG</text>
+  <text x="800" y="345" text-anchor="middle" font-family="Arial, sans-serif" font-size="8" fill="#388E3C">MLAG</text>
+  
+  <!-- Physical Connection Lines: Switches to Servers -->
+  <line x1="275" y1="405" x2="275" y2="480" stroke="#388E3C" stroke-width="3" marker-end="url(#arrowhead-green)"/>
+  <line x1="625" y1="405" x2="625" y2="480" stroke="#388E3C" stroke-width="3" marker-end="url(#arrowhead-green)"/>
+  <line x1="975" y1="405" x2="975" y2="480" stroke="#388E3C" stroke-width="3" marker-end="url(#arrowhead-green)"/>
+  
+  <!-- Server Section -->
+  <rect x="50" y="480" width="1100" height="200" rx="10" fill="#E3F2FD" stroke="#1976D2" stroke-width="3"/>
+  <text x="600" y="505" text-anchor="middle" font-family="Arial, sans-serif" font-size="16" font-weight="bold" fill="#1976D2">EDGE SERVERS</text>
+  
+  <!-- Server Row 1 -->
+  <rect x="80" y="520" width="140" height="70" rx="6" fill="#BBDEFB" stroke="#1976D2" stroke-width="2"/>
+  <text x="150" y="545" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="bold" fill="#0D47A1">Edge Server 1</text>
+  <text x="150" y="560" text-anchor="middle" font-family="Arial, sans-serif" font-size="9" fill="#666">10.0.2.1</text>
+  <text x="150" y="575" text-anchor="middle" font-family="Arial, sans-serif" font-size="8" fill="#1976D2">eth0 → SW1</text>
+  
+  <rect x="240" y="520" width="140" height="70" rx="6" fill="#BBDEFB" stroke="#1976D2" stroke-width="2"/>
+  <text x="310" y="545" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="bold" fill="#0D47A1">Edge Server 2</text>
+  <text x="310" y="560" text-anchor="middle" font-family="Arial, sans-serif" font-size="9" fill="#666">10.0.2.2</text>
+  <text x="310" y="575" text-anchor="middle" font-family="Arial, sans-serif" font-size="8" fill="#1976D2">eth0 → SW1</text>
+  
+  <rect x="400" y="520" width="140" height="70" rx="6" fill="#BBDEFB" stroke="#1976D2" stroke-width="2"/>
+  <text x="470" y="545" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="bold" fill="#0D47A1">Edge Server 3</text>
+  <text x="470" y="560" text-anchor="middle" font-family="Arial, sans-serif" font-size="9" fill="#666">10.0.2.3</text>
+  <text x="470" y="575" text-anchor="middle" font-family="Arial, sans-serif" font-size="8" fill="#1976D2">eth0 → SW2</text>
+  
+  <rect x="560" y="520" width="140" height="70" rx="6" fill="#BBDEFB" stroke="#1976D2" stroke-width="2"/>
+  <text x="630" y="545" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="bold" fill="#0D47A1">Edge Server 4</text>
+  <text x="630" y="560" text-anchor="middle" font-family="Arial, sans-serif" font-size="9" fill="#666">10.0.2.4</text>
+  <text x="630" y="575" text-anchor="middle" font-family="Arial, sans-serif" font-size="8" fill="#1976D2">eth0 → SW2</text>
+  
+  <rect x="720" y="520" width="140" height="70" rx="6" fill="#BBDEFB" stroke="#1976D2" stroke-width="2"/>
+  <text x="790" y="545" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="bold" fill="#0D47A1">Edge Server 5</text>
+  <text x="790" y="560" text-anchor="middle" font-family="Arial, sans-serif" font-size="9" fill="#666">10.0.2.5</text>
+  <text x="790" y="575" text-anchor="middle" font-family="Arial, sans-serif" font-size="8" fill="#1976D2">eth0 → SW3</text>
+  
+  <rect x="880" y="520" width="140" height="70" rx="6" fill="#BBDEFB" stroke="#1976D2" stroke-width="2"/>
+  <text x="950" y="545" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="bold" fill="#0D47A1">Edge Server 6</text>
+  <text x="950" y="560" text-anchor="middle" font-family="Arial, sans-serif" font-size="9" fill="#666">10.0.2.6</text>
+  <text x="950" y="575" text-anchor="middle" font-family="Arial, sans-serif" font-size="8" fill="#1976D2">eth0 → SW3</text>
+  
+  <!-- Server Components -->
+  <rect x="80" y="600" width="940" height="65" rx="5" fill="#E1F5FE" stroke="#0288D1" stroke-width="1"/>
+  <text x="550" y="620" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" font-weight="bold" fill="#01579B">Each Edge Server Contains:</text>
+  
+  <rect x="100" y="630" width="100" height="25" rx="3" fill="#B3E5FC" stroke="#0288D1" stroke-width="1"/>
+  <text x="150" y="647" text-anchor="middle" font-family="Arial, sans-serif" font-size="9" fill="#01579B">BIRD (iBGP)</text>
+  
+  <rect x="210" y="630" width="100" height="25" rx="3" fill="#B3E5FC" stroke="#0288D1" stroke-width="1"/>
+  <text x="260" y="647" text-anchor="middle" font-family="Arial, sans-serif" font-size="9" fill="#01579B">Silverton Agent</text>
+  
+  <rect x="320" y="630" width="100" height="25" rx="3" fill="#B3E5FC" stroke="#0288D1" stroke-width="1"/>
+  <text x="370" y="647" text-anchor="middle" font-family="Arial, sans-serif" font-size="9" fill="#01579B">steerd</text>
+  
+  <rect x="430" y="630" width="100" height="25" rx="3" fill="#B3E5FC" stroke="#0288D1" stroke-width="1"/>
+  <text x="480" y="647" text-anchor="middle" font-family="Arial, sans-serif" font-size="9" fill="#01579B">Cache App</text>
+  
+  <rect x="540" y="630" width="100" height="25" rx="3" fill="#B3E5FC" stroke="#0288D1" stroke-width="1"/>
+  <text x="590" y="647" text-anchor="middle" font-family="Arial, sans-serif" font-size="9" fill="#01579B">eBPF Programs</text>
+  
+  <rect x="650" y="630" width="100" height="25" rx="3" fill="#B3E5FC" stroke="#0288D1" stroke-width="1"/>
+  <text x="700" y="647" text-anchor="middle" font-family="Arial, sans-serif" font-size="9" fill="#01579B">iptables/nft</text>
+  
+  <rect x="760" y="630" width="100" height="25" rx="3" fill="#B3E5FC" stroke="#0288D1" stroke-width="1"/>
+  <text x="810" y="647" text-anchor="middle" font-family="Arial, sans-serif" font-size="9" fill="#01579B">Routing Tables</text>
+  
+  <rect x="870" y="630" width="100" height="25" rx="3" fill="#B3E5FC" stroke="#0288D1" stroke-width="1"/>
+  <text x="920" y="647" text-anchor="middle" font-family="Arial, sans-serif" font-size="9" fill="#01579B">ARP Table</text>
+  
+  <!-- Legend -->
+  <rect x="50" y="700" width="1100" height="80" rx="5" fill="#f5f5f5" stroke="#ddd" stroke-width="1"/>
+  <text x="600" y="725" text-anchor="middle" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#333">PHYSICAL CONNECTION LEGEND</text>
+  
+  <!-- Legend Items -->
+  <line x1="80" y1="750" x2="130" y2="750" stroke="#F57C00" stroke-width="4"/>
+  <text x="140" y="755" font-family="Arial, sans-serif" font-size="10" fill="#333">Transit ISP 1 Connection (Path 0)</text>
+  
+  <line x1="320" y1="750" x2="370" y2="750" stroke="#1976D2" stroke-width="4"/>
+  <text x="380" y="755" font-family="Arial, sans-serif" font-size="10" fill="#333">Transit ISP 2 Connection (Path 1)</text>
+  
+  <line x1="560" y1="750" x2="610" y2="750" stroke="#7B1FA2" stroke-width="4"/>
+  <text x="620" y="755" font-family="Arial, sans-serif" font-size="10" fill="#333">Transit ISP 3 Connection (Path 2)</text>
+  
+  <line x1="800" y1="750" x2="850" y2="750" stroke="#388E3C" stroke-width="4"/>
+  <text x="860" y="755" font-family="Arial, sans-serif" font-size="10" fill="#333">Switch to Server Connection</text>
+  
+  <line x1="1030" y1="750" x2="1080" y2="750" stroke="#388E3C" stroke-width="3" stroke-dasharray="10,5"/>
+  <text x="1090" y="755" font-family="Arial, sans-serif" font-size="10" fill="#333">MLAG</text>
+</svg>

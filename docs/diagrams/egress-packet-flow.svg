@@ -1,0 +1,195 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 950" width="1200" height="950">
+  <defs>
+    <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#333"/>
+    </marker>
+    <marker id="arrowhead-orange" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#F57C00"/>
+    </marker>
+    <marker id="arrowhead-blue" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#1976D2"/>
+    </marker>
+    <marker id="arrowhead-green" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#388E3C"/>
+    </marker>
+    <marker id="arrowhead-purple" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#7B1FA2"/>
+    </marker>
+    <marker id="arrowhead-red" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#D32F2F"/>
+    </marker>
+    <marker id="arrowhead-teal" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#00796B"/>
+    </marker>
+  </defs>
+  
+  <!-- Background -->
+  <rect width="1200" height="950" fill="#fafafa"/>
+  
+  <!-- Title -->
+  <text x="600" y="30" text-anchor="middle" font-family="Arial, sans-serif" font-size="22" font-weight="bold" fill="#333">EGRESS PACKET LOGICAL FLOW</text>
+  <text x="600" y="50" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#666">How a packet traverses the egress path from Edge Server to Internet</text>
+  
+  <!-- Step 1: Application Layer -->
+  <rect x="50" y="70" width="1100" height="100" rx="8" fill="#E8F5E9" stroke="#388E3C" stroke-width="2"/>
+  <text x="100" y="95" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#2E7D32">STEP 1: APPLICATION LAYER</text>
+  
+  <rect x="100" y="110" width="200" height="45" rx="5" fill="#C8E6C9" stroke="#388E3C" stroke-width="1"/>
+  <text x="200" y="130" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" font-weight="bold" fill="#2E7D32">Cache Application</text>
+  <text x="200" y="145" text-anchor="middle" font-family="Arial, sans-serif" font-size="9" fill="#666">Varnish/NGINX</text>
+  
+  <!-- Packet representation -->
+  <rect x="350" y="110" width="350" height="45" rx="5" fill="#fff" stroke="#388E3C" stroke-width="1"/>
+  <text x="525" y="125" text-anchor="middle" font-family="Arial, sans-serif" font-size="9" font-weight="bold" fill="#333">Response Packet:</text>
+  <text x="525" y="140" text-anchor="middle" font-family="monospace" font-size="9" fill="#388E3C">src=VIP:203.0.113.10:443 dst=Client:198.51.100.50:54321</text>
+  
+  <text x="750" y="135" font-family="Arial, sans-serif" font-size="10" fill="#666">→ Application sends response via socket</text>
+  
+  <!-- Arrow down -->
+  <line x1="525" y1="170" x2="525" y2="200" stroke="#388E3C" stroke-width="2" marker-end="url(#arrowhead-green)"/>
+  
+  <!-- Step 2: Kernel Routing Decision -->
+  <rect x="50" y="200" width="1100" height="150" rx="8" fill="#E3F2FD" stroke="#1976D2" stroke-width="2"/>
+  <text x="100" y="225" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#1976D2">STEP 2: KERNEL ROUTING DECISION (Fighting FIB)</text>
+  
+  <!-- Routing Table Lookup -->
+  <rect x="100" y="240" width="180" height="95" rx="5" fill="#BBDEFB" stroke="#1976D2" stroke-width="1"/>
+  <text x="190" y="260" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" font-weight="bold" fill="#0D47A1">FIB Lookup</text>
+  <text x="190" y="275" text-anchor="middle" font-family="Arial, sans-serif" font-size="8" fill="#1976D2">dst: 198.51.100.50</text>
+  <text x="190" y="290" text-anchor="middle" font-family="Arial, sans-serif" font-size="8" fill="#666">→ Route found!</text>
+  <text x="190" y="305" text-anchor="middle" font-family="Arial, sans-serif" font-size="8" fill="#666">via 10.0.0.1 (Transit1)</text>
+  <text x="190" y="320" text-anchor="middle" font-family="Arial, sans-serif" font-size="8" fill="#666">or via 10.0.0.2 (Transit2)</text>
+  
+  <!-- Traffic Steering Decision -->
+  <rect x="320" y="240" width="200" height="95" rx="5" fill="#F3E5F5" stroke="#7B1FA2" stroke-width="1"/>
+  <text x="420" y="260" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" font-weight="bold" fill="#7B1FA2">Traffic Steering</text>
+  <text x="420" y="275" text-anchor="middle" font-family="Arial, sans-serif" font-size="8" fill="#7B1FA2">IPSet lookup:</text>
+  <text x="420" y="290" text-anchor="middle" font-family="Arial, sans-serif" font-size="8" fill="#666">198.51.100.50 in path_0?</text>
+  <text x="420" y="305" text-anchor="middle" font-family="Arial, sans-serif" font-size="8" fill="#666">→ YES: mark=0x100</text>
+  <text x="420" y="320" text-anchor="middle" font-family="Arial, sans-serif" font-size="8" fill="#666">→ NO: mark=0x101</text>
+  
+  <!-- Policy Routing -->
+  <rect x="560" y="240" width="180" height="95" rx="5" fill="#FFE0B2" stroke="#F57C00" stroke-width="1"/>
+  <text x="650" y="260" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" font-weight="bold" fill="#E65100">Policy Routing</text>
+  <text x="650" y="275" text-anchor="middle" font-family="Arial, sans-serif" font-size="8" fill="#F57C00">fwmark → table:</text>
+  <text x="650" y="290" text-anchor="middle" font-family="Arial, sans-serif" font-size="8" fill="#666">0x100 → table 100</text>
+  <text x="650" y="305" text-anchor="middle" font-family="Arial, sans-serif" font-size="8" fill="#666">0x101 → table 101</text>
+  <text x="650" y="320" text-anchor="middle" font-family="Arial, sans-serif" font-size="8" fill="#666">→ Select egress interface</text>
+  
+  <!-- Result -->
+  <rect x="780" y="240" width="350" height="95" rx="5" fill="#fff" stroke="#1976D2" stroke-width="1"/>
+  <text x="955" y="260" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" font-weight="bold" fill="#333">Decision Result:</text>
+  <text x="955" y="280" text-anchor="middle" font-family="Arial, sans-serif" font-size="9" fill="#388E3C">Path 0 (Primary): eth0 → Transit1 (10.0.0.1)</text>
+  <text x="955" y="295" text-anchor="middle" font-family="Arial, sans-serif" font-size="9" fill="#1976D2">Path 1 (Failover): eth1 → Transit2 (10.0.0.2)</text>
+  <text x="955" y="315" text-anchor="middle" font-family="Arial, sans-serif" font-size="9" fill="#7B1FA2">Based on: Health score + IPSet membership</text>
+  
+  <!-- Arrow down -->
+  <line x1="525" y1="350" x2="525" y2="380" stroke="#1976D2" stroke-width="2" marker-end="url(#arrowhead-blue)"/>
+  
+  <!-- Step 3: ARP Resolution -->
+  <rect x="50" y="380" width="1100" height="100" rx="8" fill="#FFF3E0" stroke="#F57C00" stroke-width="2"/>
+  <text x="100" y="405" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#E65100">STEP 3: ARP RESOLUTION (Silverton)</text>
+  
+  <!-- ARP Table -->
+  <rect x="100" y="420" width="200" height="45" rx="5" fill="#FFE0B2" stroke="#F57C00" stroke-width="1"/>
+  <text x="200" y="438" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" font-weight="bold" fill="#E65100">ARP Table (Static)</text>
+  <text x="200" y="455" text-anchor="middle" font-family="Arial, sans-serif" font-size="8" fill="#666">from Silverton Agent</text>
+  
+  <!-- ARP Lookup -->
+  <rect x="350" y="420" width="250" height="45" rx="5" fill="#fff" stroke="#F57C00" stroke-width="1"/>
+  <text x="475" y="438" text-anchor="middle" font-family="Arial, sans-serif" font-size="9" font-weight="bold" fill="#333">ARP Lookup:</text>
+  <text x="475" y="455" text-anchor="middle" font-family="monospace" font-size="8" fill="#F57C00">10.0.0.1 → MAC: aa:bb:cc:dd:ee:01</text>
+  
+  <!-- Result -->
+  <rect x="650" y="420" width="480" height="45" rx="5" fill="#fff" stroke="#F57C00" stroke-width="1"/>
+  <text x="890" y="438" text-anchor="middle" font-family="Arial, sans-serif" font-size="9" font-weight="bold" fill="#333">Next-hop MAC resolved (no ARP broadcast needed!)</text>
+  <text x="890" y="455" text-anchor="middle" font-family="Arial, sans-serif" font-size="8" fill="#666">Silverton pre-populated this entry from switch ARP table</text>
+  
+  <!-- Arrow down -->
+  <line x1="525" y1="480" x2="525" y2="510" stroke="#F57C00" stroke-width="2" marker-end="url(#arrowhead-orange)"/>
+  
+  <!-- Step 4: Packet Construction -->
+  <rect x="50" y="510" width="1100" height="120" rx="8" fill="#F3E5F5" stroke="#7B1FA2" stroke-width="2"/>
+  <text x="100" y="535" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#7B1FA2">STEP 4: PACKET CONSTRUCTION</text>
+  
+  <!-- Before SNAT -->
+  <rect x="100" y="550" width="280" height="65" rx="5" fill="#fff" stroke="#7B1FA2" stroke-width="1"/>
+  <text x="240" y="568" text-anchor="middle" font-family="Arial, sans-serif" font-size="9" font-weight="bold" fill="#333">Before SNAT:</text>
+  <text x="240" y="585" text-anchor="middle" font-family="monospace" font-size="8" fill="#333">IP: src=203.0.113.10 (VIP)</text>
+  <text x="240" y="600" text-anchor="middle" font-family="monospace" font-size="8" fill="#333">    dst=198.51.100.50</text>
+  
+  <!-- SNAT -->
+  <rect x="420" y="550" width="200" height="65" rx="5" fill="#E1BEE7" stroke="#7B1FA2" stroke-width="1"/>
+  <text x="520" y="568" text-anchor="middle" font-family="Arial, sans-serif" font-size="9" font-weight="bold" fill="#7B1FA2">SNAT (iptables)</text>
+  <text x="520" y="585" text-anchor="middle" font-family="Arial, sans-serif" font-size="8" fill="#666">Change source IP</text>
+  <text x="520" y="600" text-anchor="middle" font-family="Arial, sans-serif" font-size="8" fill="#666">to SNAT pool address</text>
+  
+  <!-- After SNAT -->
+  <rect x="660" y="550" width="280" height="65" rx="5" fill="#fff" stroke="#7B1FA2" stroke-width="1"/>
+  <text x="800" y="568" text-anchor="middle" font-family="Arial, sans-serif" font-size="9" font-weight="bold" fill="#333">After SNAT:</text>
+  <text x="800" y="585" text-anchor="middle" font-family="monospace" font-size="8" fill="#388E3C">IP: src=198.51.100.2 (SNAT pool)</text>
+  <text x="800" y="600" text-anchor="middle" font-family="monospace" font-size="8" fill="#333">    dst=198.51.100.50</text>
+  
+  <!-- Arrow down -->
+  <line x1="525" y1="630" x2="525" y2="660" stroke="#7B1FA2" stroke-width="2" marker-end="url(#arrowhead-purple)"/>
+  
+  <!-- Step 5: Ethernet Frame -->
+  <rect x="50" y="660" width="1100" height="100" rx="8" fill="#E0E0E0" stroke="#616161" stroke-width="2"/>
+  <text x="100" y="685" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#424242">STEP 5: ETHERNET FRAME CONSTRUCTION</text>
+  
+  <!-- Frame -->
+  <rect x="100" y="700" width="700" height="45" rx="5" fill="#fff" stroke="#616161" stroke-width="1"/>
+  <text x="450" y="718" text-anchor="middle" font-family="Arial, sans-serif" font-size="9" font-weight="bold" fill="#333">Ethernet Frame:</text>
+  <text x="450" y="735" text-anchor="middle" font-family="monospace" font-size="8" fill="#333">dst MAC: aa:bb:cc:dd:ee:01 (Transit1 gateway) | src MAC: 11:22:33:44:55:66 (Server NIC) | Type: 0x0800 (IPv4)</text>
+  
+  <text x="850" y="725" font-family="Arial, sans-serif" font-size="10" fill="#666">→ Frame ready for transmission</text>
+  
+  <!-- Arrow down -->
+  <line x1="525" y1="760" x2="525" y2="790" stroke="#616161" stroke-width="2" marker-end="url(#arrowhead)"/>
+  
+  <!-- Step 6: Physical Transmission -->
+  <rect x="50" y="790" width="1100" height="140" rx="8" fill="#E8F5E9" stroke="#388E3C" stroke-width="2"/>
+  <text x="100" y="815" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#2E7D32">STEP 6: PHYSICAL TRANSMISSION</text>
+  
+  <!-- NIC -->
+  <rect x="100" y="830" width="150" height="85" rx="5" fill="#C8E6C9" stroke="#388E3C" stroke-width="1"/>
+  <text x="175" y="850" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" font-weight="bold" fill="#2E7D32">Server NIC</text>
+  <text x="175" y="865" text-anchor="middle" font-family="Arial, sans-serif" font-size="8" fill="#666">eth0</text>
+  <text x="175" y="880" text-anchor="middle" font-family="Arial, sans-serif" font-size="8" fill="#666">TX queue</text>
+  <text x="175" y="905" text-anchor="middle" font-family="Arial, sans-serif" font-size="8" fill="#388E3C">→ Wire</text>
+  
+  <!-- Switch -->
+  <rect x="300" y="830" width="150" height="85" rx="5" fill="#C8E6C9" stroke="#388E3C" stroke-width="1"/>
+  <text x="375" y="850" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" font-weight="bold" fill="#2E7D32">Arista Switch</text>
+  <text x="375" y="865" text-anchor="middle" font-family="Arial, sans-serif" font-size="8" fill="#666">MAC table lookup</text>
+  <text x="375" y="880" text-anchor="middle" font-family="Arial, sans-serif" font-size="8" fill="#666">dst MAC → Port</text>
+  <text x="375" y="905" text-anchor="middle" font-family="Arial, sans-serif" font-size="8" fill="#388E3C">→ Forward</text>
+  
+  <!-- Transit -->
+  <rect x="500" y="830" width="150" height="85" rx="5" fill="#FFE0B2" stroke="#F57C00" stroke-width="1"/>
+  <text x="575" y="850" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" font-weight="bold" fill="#E65100">Transit ISP</text>
+  <text x="575" y="865" text-anchor="middle" font-family="Arial, sans-serif" font-size="8" fill="#666">Routing lookup</text>
+  <text x="575" y="880" text-anchor="middle" font-family="Arial, sans-serif" font-size="8" fill="#666">Forward toward</text>
+  <text x="575" y="905" text-anchor="middle" font-family="Arial, sans-serif" font-size="8" fill="#F57C00">→ Internet</text>
+  
+  <!-- Internet -->
+  <rect x="700" y="830" width="150" height="85" rx="5" fill="#BBDEFB" stroke="#1976D2" stroke-width="1"/>
+  <text x="775" y="850" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" font-weight="bold" fill="#0D47A1">Internet</text>
+  <text x="775" y="865" text-anchor="middle" font-family="Arial, sans-serif" font-size="8" fill="#666">BGP routing</text>
+  <text x="775" y="880" text-anchor="middle" font-family="Arial, sans-serif" font-size="8" fill="#666">Hop by hop</text>
+  <text x="775" y="905" text-anchor="middle" font-family="Arial, sans-serif" font-size="8" fill="#1976D2">→ Client</text>
+  
+  <!-- Client -->
+  <rect x="900" y="830" width="150" height="85" rx="5" fill="#FFCDD2" stroke="#D32F2F" stroke-width="1"/>
+  <text x="975" y="850" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" font-weight="bold" fill="#C62828">Client</text>
+  <text x="975" y="865" text-anchor="middle" font-family="Arial, sans-serif" font-size="8" fill="#666">198.51.100.50</text>
+  <text x="975" y="880" text-anchor="middle" font-family="Arial, sans-serif" font-size="8" fill="#666">Receives packet</text>
+  <text x="975" y="905" text-anchor="middle" font-family="Arial, sans-serif" font-size="8" fill="#D32F2F">✓ Response</text>
+  
+  <!-- Arrows between components -->
+  <line x1="250" y1="872" x2="300" y2="872" stroke="#388E3C" stroke-width="2" marker-end="url(#arrowhead-green)"/>
+  <line x1="450" y1="872" x2="500" y2="872" stroke="#F57C00" stroke-width="2" marker-end="url(#arrowhead-orange)"/>
+  <line x1="650" y1="872" x2="700" y2="872" stroke="#1976D2" stroke-width="2" marker-end="url(#arrowhead-blue)"/>
+  <line x1="850" y1="872" x2="900" y2="872" stroke="#D32F2F" stroke-width="2" marker-end="url(#arrowhead-red)"/>
+</svg>
