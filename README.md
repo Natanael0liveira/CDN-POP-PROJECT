@@ -302,45 +302,309 @@ For **outbound traffic** (responses from edge servers to clients, and traffic to
 
 ### 3.3 Silverton - Route Reflection Controller
 
+Silverton is a distributed routing agent developed by Fastly that solves a critical problem in the Fighting FIB architecture: **how to propagate network reachability information from switches to servers without requiring expensive routers**.
+
+#### 3.3.1 The Problem Silverton Solves
+
+In traditional architectures, routers maintain full FIB (Forwarding Information Base) tables with hundreds of thousands of routes. This requires expensive hardware with large TCAM (Ternary Content-Addressable Memory) capacity. Commodity switches (like Arista) have limited FIB capacity - typically tens of thousands of entries versus the 800K+ IPv4 routes in the full Internet routing table.
+
+**Silverton's Solution**: Instead of storing all routes in the switch FIB, push the full routing table to the host kernels where memory is abundant and cheap. The switch only needs to forward packets based on MAC addresses, not IP routing.
+
+#### 3.3.2 How Silverton Actually Works
+
+Silverton operates as a **two-component system**:
+
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
-│                    SILVERTON CONTROLLER                                   │
+│                    SILVERTON COMPONENT ARCHITECTURE                       │
 ├──────────────────────────────────────────────────────────────────────────┤
 │                                                                          │
-│  Silverton is a distributed routing agent that orchestrates:             │
-│  1. BGP route reflection from switches to hosts                          │
-│  2. ARP table propagation                                                │
-│  3. Dynamic network configuration                                        │
+│  ┌───────────────────────────────────────────────────────────────────┐  │
+│  │                    SWITCH SIDE (Silverton Controller)              │  │
+│  │                                                                    │  │
+│  │  Role: OBSERVE and PUBLISH                                        │  │
+│  │                                                                    │  │
+│  │  ┌─────────────────────────────────────────────────────────────┐  │  │
+│  │  │  1. BGP Route Reflector (BIRD daemon)                        │  │  │
+│  │  │     - Receives full Internet routes via eBGP from transits  │  │  │
+│  │  │     - Reflects routes to all hosts via iBGP                 │  │  │
+│  │  │     - NO need to install routes in switch FIB               │  │  │
+│  │  └─────────────────────────────────────────────────────────────┘  │  │
+│  │                                                                    │  │
+│  │  ┌─────────────────────────────────────────────────────────────┐  │  │
+│  │  │  2. ARP Table Watcher (EOS SDK daemon)                       │  │  │
+│  │  │     - Monitors switch ARP table in real-time                │  │  │
+│  │  │     - Detects when switch learns new neighbor MAC           │  │  │
+│  │  │     - Publishes ARP updates via gRPC to all agents          │  │  │
+│  │  └─────────────────────────────────────────────────────────────┘  │  │
+│  └───────────────────────────────────────────────────────────────────┘  │
+│                              │                                           │
+│                              │ gRPC Stream (bidirectional)               │
+│                              ▼                                           │
+│  ┌───────────────────────────────────────────────────────────────────┐  │
+│  │                    SERVER SIDE (Silverton Agent)                   │  │
+│  │                                                                    │  │
+│  │  Role: RECEIVE and APPLY                                          │  │
+│  │                                                                    │  │
+│  │  ┌─────────────────────────────────────────────────────────────┐  │  │
+│  │  │  1. BGP Route Receiver (BIRD daemon)                         │  │  │
+│  │  │     - Receives full Internet routes via iBGP from switch    │  │  │
+│  │  │     - Installs routes into kernel FIB (main routing table)  │  │  │
+│  │  │     - Host now has full routing table (~800K routes)        │  │  │
+│  │  └─────────────────────────────────────────────────────────────┘  │  │
+│  │                                                                    │  │
+│  │  ┌─────────────────────────────────────────────────────────────┐  │  │
+│  │  │  2. ARP Applier (Silverton agent daemon)                     │  │  │
+│  │  │     - Receives ARP updates from switch controller            │  │  │
+│  │  │     - Creates static ARP entries via netlink                 │  │  │
+│  │  │     - Entries are NUD_PERMANENT (never expire)              │  │  │
+│  │  └─────────────────────────────────────────────────────────────┘  │  │
+│  └───────────────────────────────────────────────────────────────────┘  │
 │                                                                          │
-│  ┌─────────────────────────────────────────────────────────────────────┐│
-│  │                    ROUTE REFLECTION FLOW                             ││
-│  │                                                                      ││
-│  │  Transit ISP                                                         ││
-│  │      │                                                               ││
-│  │      │ eBGP (full internet routes)                                  ││
-│  │      ▼                                                               ││
-│  │  ┌──────────────┐                                                    ││
-│  │  │   Arista     │  BIRD/ExaBGP daemon                               ││
-│  │  │   Switch     │  (userspace BGP)                                  ││
-│  │  │              │                                                    ││
-│  │  │  Routes:     │                                                    ││
-│  │  │  - Default   │                                                    ││
-│  │  │  - Transit 1 │                                                    ││
-│  │  │  - Transit 2 │                                                    ││
-│  │  └──────┬───────┘                                                    ││
-│  │         │                                                            ││
-│  │         │ iBGP (route reflection)                                    ││
-│  │         │                                                            ││
-│  │         ▼                                                            ││
-│  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐               ││
-│  │  │   Host 1     │  │   Host 2     │  │   Host N     │               ││
-│  │  │   BIRD       │  │   BIRD       │  │   BIRD       │               ││
-│  │  │   (kernel)   │  │   (kernel)   │  │   (kernel)   │               ││
-│  │  │              │  │              │  │              │               ││
-│  │  │  Full FIB    │  │  Full FIB    │  │  Full FIB    │               ││
-│  │  │  in kernel   │  │  in kernel   │  │  in kernel   │               ││
-│  │  └──────────────┘  └──────────────┘  └──────────────┘               ││
-│  └─────────────────────────────────────────────────────────────────────┘│
+└──────────────────────────────────────────────────────────────────────────┘
+```
+
+#### 3.3.3 Silverton on the Switch: What It Actually Does
+
+On the Arista switch, Silverton runs as an EOS SDK daemon that performs two distinct functions:
+
+**1. BGP Route Reflection (via BIRD or ExaBGP):**
+
+```bash
+# The switch runs a BGP daemon that:
+# 1. Establishes eBGP sessions with transit ISPs
+# 2. Receives full Internet routing table (~800K IPv4 + ~100K IPv6 routes)
+# 3. Reflects these routes to all connected hosts via iBGP
+# 4. Does NOT install these routes in switch FIB (only default route needed)
+
+# Example BIRD configuration on switch:
+protocol bgp transit1 {
+    local as 64512;
+    neighbor 10.0.0.1 as 64513;  # Transit ISP 1
+    import all;   # Accept all routes
+    export none;  # Don't advertise anything
+}
+
+protocol bgp host_rr {
+    local as 64512;
+    neighbor 10.0.2.1 as 64512;  # Edge Server 1
+    neighbor 10.0.2.2 as 64512;  # Edge Server 2
+    # ... more hosts
+    import none;  # Don't accept routes from hosts
+    export all;   # Reflect all routes to hosts
+    rr client;    # Act as route reflector
+}
+```
+
+**2. ARP Table Monitoring and Propagation:**
+
+```python
+# Silverton Controller on Switch (EOS SDK daemon)
+# This runs inside the switch's EOS environment
+
+class SilvertonController:
+    def __init__(self):
+        # Subscribe to ARP table changes via EOS API
+        self.arp_table = eos.ArpTable()
+        self.arp_table.handler(self.on_arp_change)
+        
+        # gRPC server to stream updates to agents
+        self.grpc_server = grpc.server()
+        self.registered_agents = []
+    
+    def on_arp_change(self, key, old_entry, new_entry):
+        """
+        Called by EOS when ARP table changes.
+        This is the KEY function - it detects when the switch
+        learns a new MAC address and immediately propagates
+        this information to all servers.
+        """
+        if new_entry is not None:
+            # New or updated ARP entry
+            update = ArpUpdate(
+                ip_address=key.ip_address(),      # e.g., 10.0.0.1
+                mac_address=new_entry.mac_addr(), # e.g., aa:bb:cc:dd:ee:ff
+                interface=new_entry.interface(),  # e.g., Ethernet1
+                type=UpdateType.ADD_OR_UPDATE
+            )
+        else:
+            # Deleted ARP entry
+            update = ArpUpdate(
+                ip_address=key.ip_address(),
+                type=UpdateType.DELETE
+            )
+        
+        # Broadcast to all registered Silverton agents on servers
+        self.broadcast_arp_update(update)
+```
+
+**Why the switch doesn't need full FIB:**
+- The switch only needs to know how to reach directly connected neighbors
+- Packets from servers already have the correct destination MAC (set by the server)
+- Switch does simple MAC lookup and forwarding, not IP routing
+- This is why commodity switches work - they only need MAC table, not full FIB
+
+#### 3.3.4 Silverton on the Server: What It Actually Does
+
+On each edge server, Silverton runs as a userspace daemon that applies network configuration:
+
+**1. BGP Route Reception (via BIRD):**
+
+```bash
+# The server runs BIRD to receive routes from switch
+# /etc/bird/bird.conf on edge server
+
+protocol bgp switch_rr {
+    local as 64512;
+    neighbor 10.0.1.254 as 64512;  # Switch IP
+    import all;   # Accept all reflected routes
+    export none;  # Don't advertise anything
+    
+    # Routes go directly to kernel
+}
+
+protocol kernel {
+    scan time 60;
+    import none;
+    export all;  # Export BGP routes to kernel FIB
+}
+
+# After BIRD establishes session:
+# $ ip route show | wc -l
+# 800000+  # Full Internet routing table in kernel!
+```
+
+**2. ARP Entry Application (via Silverton Agent):**
+
+```python
+# Silverton Agent on Server (Linux daemon)
+# /usr/bin/silverton-agent
+
+class SilvertonAgent:
+    def __init__(self):
+        self.nl_socket = netlink.socket()
+        self.controllers = ["10.0.1.254:50051", "10.0.1.253:50051"]
+    
+    def on_arp_update(self, update):
+        """
+        Called when switch sends ARP update.
+        This applies the ARP entry to the kernel immediately.
+        """
+        if update.type == UpdateType.DELETE:
+            self.delete_arp_entry(update.ip_address, update.interface)
+        else:
+            self.add_arp_entry(
+                update.ip_address,
+                update.mac_address,
+                update.interface
+            )
+    
+    def add_arp_entry(self, ip, mac, interface):
+        """
+        Create static ARP entry via netlink.
+        This is the CRITICAL function - it allows the server
+        to send packets directly to the transit gateway
+        without the switch needing to route.
+        """
+        # Netlink message to add neighbor
+        msg = netlink.NeighborMessage()
+        msg.family = socket.AF_INET
+        msg.ifindex = netlink.if_nametoindex(interface)
+        msg.state = netlink.NUD_PERMANENT  # Static - never expires!
+        
+        msg.attrs = [
+            (netlink.NDA_DST, ip),        # Next-hop IP
+            (netlink.NDA_LLADDR, mac),    # Next-hop MAC
+        ]
+        
+        # Send to kernel
+        netlink.send(msg, NLM_F_REQUEST | NLM_F_CREATE | NLM_F_REPLACE)
+        
+        # Result: Server now has static ARP for transit gateway
+        # $ ip neigh show 10.0.0.1
+        # 10.0.0.1 dev eth0 lladdr aa:bb:cc:dd:ee:ff nud permanent
+```
+
+#### 3.3.5 The Complete Flow: How It All Works Together
+
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│                    SILVERTON OPERATIONAL FLOW                             │
+├──────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  STEP 1: Switch learns transit provider's MAC                            │
+│  ────────────────────────────────────────────                            │
+│  Transit Router (10.0.0.1) sends packet to switch                        │
+│  Switch learns: 10.0.0.1 → MAC aa:bb:cc:dd:ee:ff                         │
+│  EOS triggers ARP table change event                                     │
+│                                                                          │
+│  STEP 2: Silverton Controller detects and broadcasts                     │
+│  ─────────────────────────────────────────────────────                   │
+│  Silverton (switch) receives ARP change event                            │
+│  Creates gRPC message: {ip: 10.0.0.1, mac: aa:bb:cc:dd:ee:ff}           │
+│  Streams to all registered Silverton agents                              │
+│                                                                          │
+│  STEP 3: Silverton Agent applies to kernel                               │
+│  ──────────────────────────────────────────                              │
+│  Silverton (server) receives gRPC message                                │
+│  Calls netlink to add static ARP entry                                   │
+│  Kernel now has: 10.0.0.1 → aa:bb:cc:dd:ee:ff (permanent)               │
+│                                                                          │
+│  STEP 4: Server can now send directly                                    │
+│  ──────────────────────────────────────                                  │
+│  Server wants to send packet to client 203.0.113.100                    │
+│  Kernel FIB lookup: 203.0.113.100 → via 10.0.0.1 (transit)              │
+│  Kernel ARP lookup: 10.0.0.1 → aa:bb:cc:dd:ee:ff                        │
+│  Server builds frame: dst_mac=aa:bb:cc:dd:ee:ff                         │
+│  Sends to switch                                                         │
+│                                                                          │
+│  STEP 5: Switch forwards based on MAC only                               │
+│  ───────────────────────────────────────────                             │
+│  Switch receives frame with dst_mac=aa:bb:cc:dd:ee:ff                   │
+│  MAC table lookup: aa:bb:cc:dd:ee:ff → Ethernet1 (toward transit)       │
+│  Forwards frame - NO IP routing needed!                                  │
+│                                                                          │
+│  KEY INSIGHT:                                                            │
+│  ─────────────                                                           │
+│  The server does the IP routing (FIB lookup)                             │
+│  The switch does only L2 forwarding (MAC lookup)                         │
+│  This is why commodity switches work - they don't need full FIB!         │
+│                                                                          │
+└──────────────────────────────────────────────────────────────────────────┘
+```
+
+#### 3.3.6 Route Reflection Flow
+
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│                    ROUTE REFLECTION FLOW                                  │
+├──────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  Transit ISP                                                             │
+│      │                                                                   │
+│      │ eBGP (full internet routes)                                      │
+│      ▼                                                                   │
+│  ┌──────────────┐                                                        │
+│  │   Arista     │  BIRD/ExaBGP daemon                                   │
+│  │   Switch     │  (userspace BGP)                                      │
+│  │              │                                                        │
+│  │  Routes:     │                                                        │
+│  │  - Default   │                                                        │
+│  │  - Transit 1 │                                                        │
+│  │  - Transit 2 │                                                        │
+│  └──────┬───────┘                                                        │
+│         │                                                                │
+│         │ iBGP (route reflection)                                        │
+│         │                                                                │
+│         ▼                                                                │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐                   │
+│  │   Host 1     │  │   Host 2     │  │   Host N     │                   │
+│  │   BIRD       │  │   BIRD       │  │   BIRD       │                   │
+│  │   (kernel)   │  │   (kernel)   │  │   (kernel)   │                   │
+│  │              │  │              │  │              │                   │
+│  │  Full FIB    │  │  Full FIB    │  │  Full FIB    │                   │
+│  │  in kernel   │  │  in kernel   │  │  in kernel   │                   │
+│  └──────────────┘  └──────────────┘  └──────────────┘                   │
 │                                                                          │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
@@ -1467,14 +1731,14 @@ The ingress flow handles incoming client requests through Katran load balancers 
 └──────────┴──────────────────┴──────────────────┴─────┴─────────┘
 ```
 
-#### 6.3.2 Egress Flow Diagram: Fighting FIB + Traffic Steering
+#### 6.3.2 Egress Packet Flow Diagram
 
 The egress flow combines two complementary technologies that operate at different layers:
 
 - **Fighting FIB (Layer 3)**: Provides full Internet routing table for reachability to any origin/destination
 - **Traffic Steering (Layer 4)**: Adds health-based path selection between transit ISPs based on real-time TCP metrics
 
-![Egress Traffic Flow: Fighting FIB + Traffic Steering](docs/diagrams/egress-flow.svg)
+![Egress Packet Flow: Fighting FIB + Traffic Steering](docs/diagrams/egress-packet-flow.svg)
 
 **Egress Flow Steps:**
 
@@ -1535,11 +1799,22 @@ The Traffic Steering system supports both IPv4 and IPv6:
 | Transit 1 | `egress_path_0_v4` | `egress_path_0_v6` | 0x100 |
 | Transit 2 | `egress_path_1_v4` | `egress_path_1_v6` | 0x101 |
 
-#### 6.3.3 Architecture: Fighting FIB + Traffic Steering Integration
+#### 6.3.3 Physical Topology Diagram
 
-The complete egress architecture shows how both solutions work together in a layered approach:
+The physical topology shows the actual hardware connections and network layout:
 
-![Fighting FIB + Traffic Steering Architecture](docs/diagrams/traffic-steering-architecture.svg)
+![Egress Physical Topology](docs/diagrams/egress-physical-topology.svg)
+
+**Physical Components:**
+
+| Component | Description |
+|-----------|-------------|
+| **Arista Switches** | Commodity switches acting as BGP Route Reflectors |
+| **Edge Servers** | Linux servers with full routing table in kernel |
+| **Transit ISPs** | Two upstream providers for redundancy |
+| **Inter-switch Links** | 40G connections between switches for redundancy |
+
+#### 6.3.4 Fighting FIB Components
 
 **Fighting FIB Components (Foundation Layer - Layer 3):**
 
